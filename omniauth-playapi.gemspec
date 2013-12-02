@@ -5,7 +5,7 @@ require 'omniauth/playapi/version'
 Gem::Specification.new do |gem|
   gem.authors       = ["Michal Ajduk"]
   gem.email         = ["michal.ajduk@play.pl"]
-  gem.description   = 'PlayAPI OAuth2 Strategy for OmniAuth'
+  gem.description   = 'PlayAPI OAuth2 Strategy for OmniAuth library. Details: http://oauth.play.pl'
   gem.summary       = 'PlayAPI OAuth2 Strategy for OmniAuth'
   gem.homepage      = "http://oauth.play.pl"
 
