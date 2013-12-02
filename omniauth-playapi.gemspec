@@ -1,12 +1,13 @@
 # -*- encoding: utf-8 -*-
-require File.expand_path('../lib/omniauth-playapi/version', __FILE__)
+$:.push File.expand_path('../lib', __FILE__)
+require 'omniauth/playapi/version'
 
 Gem::Specification.new do |gem|
-  gem.authors       = ["TODO: Write your name"]
-  gem.email         = ["TODO: Write your email address"]
-  gem.description   = %q{TODO: Write a gem description}
-  gem.summary       = %q{TODO: Write a gem summary}
-  gem.homepage      = ""
+  gem.authors       = ["Michal Ajduk"]
+  gem.email         = ["michal.ajduk@play.pl"]
+  gem.description   = 'PlayAPI OAuth2 Strategy for OmniAuth'
+  gem.summary       = 'PlayAPI OAuth2 Strategy for OmniAuth'
+  gem.homepage      = "http://oauth.play.pl"
 
   gem.files         = `git ls-files`.split($\)
   gem.executables   = gem.files.grep(%r{^bin/}).map{ |f| File.basename(f) }
@@ -14,4 +15,5 @@ Gem::Specification.new do |gem|
   gem.name          = "omniauth-playapi"
   gem.require_paths = ["lib"]
   gem.version       = Omniauth::Playapi::VERSION
+  gem.add_runtime_dependency 'omniauth-oauth2', '~> 1.1'
 end
