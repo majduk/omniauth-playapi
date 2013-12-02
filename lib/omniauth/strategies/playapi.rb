@@ -93,8 +93,7 @@ module OmniAuth
       end
 
       def request_phase
-        if signed_request_contains_access_token?
-          # if we already have an access token, we can just hit the
+        if signed_request_contains_access_token?          
           # callback URL directly and pass the signed request along
           params = { :signed_request => raw_signed_request }
           query = Rack::Utils.build_query(params)
