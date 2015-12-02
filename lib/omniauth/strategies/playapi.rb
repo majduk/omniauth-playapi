@@ -8,42 +8,54 @@ module OmniAuth
     class Playapi < OmniAuth::Strategies::OAuth2
       class NoAuthorizationCodeError < StandardError; end
 
-      DEFAULT_SCOPE = 'email'
+      args [:client_id, :ssl_cert, :ssl_key, :client_options]
 
+      DEFAULT_SCOPE = 'oauth/*'
+      
       option :client_options, {
-        :site => 'https://graph.facebook.com',
-        :authorize_url => "https://www.facebook.com/dialog/oauth",
-        :token_url => '/oauth/access_token'
+        :site => 'https://oauth.play.pl',
+        :authorize_url => "https://oauth.play.pl/oauth/authorize",
+        :token_url => 'https://oapi.play.pl/oauth2/oauth/token',      
+        :info_url => 'https://oapi.play.pl/oauth2/resource/profile',
+        :authorize_params => {}    
+      }
+                                   
+      option :authorize_options, [:response_type, :scope, :state, :redirect_uri, :display]
+      option :auth_token_params, {
+       :mode => :query, 
+        :param_name => "access_token"
       }
 
-      option :token_params, {
-        :parse => :query
-      }
+      def client
+       set_ssl_params                            
+       log :debug, "client #{options.to_json} "
+        ::OAuth2::Client.new(options.client_id, options.client_id, deep_symbolize(options.client_options))
+      end
 
-      option :access_token_options, {
-        :header_format => 'OAuth %s',
-        :param_name => 'access_token'
-      }
+      def authorize_params
+        super.tap do |params|
+          options[:authorize_options].each do |k|
+            params[k] = request.params[k.to_s] unless [nil, ''].include?(request.params[k.to_s])                      
+            params[k] = options.client_options[:authorize_params][k.to_s] unless [nil, ''].include? options.client_options[:authorize_params][k.to_s]
+          end
 
-      option :authorize_options, [:scope, :display, :auth_type]
+          raw_scope = params[:scope] || DEFAULT_SCOPE
+          scope_list = raw_scope.split(" ").map {|item| item.split(",")}.flatten
+          params[:scope] = scope_list.join(" ")          
 
-      uid { raw_info['id'] }
+          session['omniauth.state'] = params[:state] if params['state']
+          log :debug, "authorize_params #{params.to_json} "          
+        end
+      end
 
+      uid { raw_info['msisdn'] }
+      
       info do
         prune!({
-          'nickname' => raw_info['username'],
-          'email' => raw_info['email'],
-          'name' => raw_info['name'],
-          'first_name' => raw_info['first_name'],
-          'last_name' => raw_info['last_name'],
-          'image' => image_url(uid, options),
-          'description' => raw_info['bio'],
-          'urls' => {
-            'Facebook' => raw_info['link'],
-            'Website' => raw_info['website']
-          },
-          'location' => (raw_info['location'] || {})['name'],
-          'verified' => raw_info['verified']
+          'nickname' => raw_info['msisdn'],
+          'name' => raw_info['msisdn'],          
+          'login_type' => raw_info['loginType'],
+          'email' => raw_info['loginType'] == 'SSO' && raw_info['ssoProfile']['login'] || '',
         })
       end
 
@@ -54,149 +66,44 @@ module OmniAuth
       end
 
       def raw_info
-        @raw_info ||= access_token.get('/me', info_options).parsed || {}
+        if @raw_info.blank?                                            
+          log :debug, "raw_info GET: #{options.client_options.info_url}"
+          @raw_info ||=  access_token.get( options.client_options.info_url ).parsed
+        end  
+        log :debug, "raw_info #{@raw_info}"
+        return @raw_info
       end
-
-      def info_options
-        params = {}
-        params.merge!({:fields => options[:info_fields]}) if options[:info_fields]
-        params.merge!({:locale => options[:locale]}) if options[:locale]
-
-        params.empty? ? {} : { :params => params }
+      
+      protected
+      def build_access_token                       
+        #access_token=super        
+        verifier = request.params["code"]
+        callback = full_host + script_name + callback_path        
+        log :debug, "build_access_token for #{callback} code=#{verifier} "             
+        access_token=client.auth_code.get_token(verifier, {:redirect_uri => callback}, deep_symbolize(options.auth_token_params))
+        log :info, "access_token granted: #{access_token.token}"        
+        return access_token                                
       end
-
-      def build_access_token
-        if signed_request_contains_access_token?
-          hash = signed_request.clone
-          ::OAuth2::AccessToken.new(
-            client,
-            hash.delete('oauth_token'),
-            hash.merge!(access_token_options.merge(:expires_at => hash.delete('expires')))
-          )
-        else
-          with_authorization_code! { super }.tap do |token|
-            token.options.merge!(access_token_options)
-          end
-        end
-      end
-
-      def callback_phase
-        super
-      rescue NoAuthorizationCodeError => e
-        fail!(:no_authz_code, e)
-      rescue NotImplementedError => e
-        if e.message =~ /unknown algorithm/i
-          fail!(:algo_not_impl, e)
-        else
-          raise e
-        end
-      end
-
-      def request_phase
-        if signed_request_contains_access_token?          
-          # callback URL directly and pass the signed request along
-          params = { :signed_request => raw_signed_request }
-          query = Rack::Utils.build_query(params)
-
-          url = callback_url
-          url << "?" unless url.match(/\?/)
-          url << "&" unless url.match(/[\&\?]$/)
-          url << query
-
-          redirect url
-        else
-          super
-        end
-      end
-
-      # NOTE if we're using code from the signed request
-      # then FB sets the redirect_uri to '' during the authorize
-      # phase + it must match during the access_token phase:
-      # https://github.com/facebook/php-sdk/blob/master/src/base_facebook.php#L348
-      def callback_url
-        if @authorization_code_from_signed_request
-          ''
-        else
-          options[:callback_url] || super
-        end
-      end
-
-      def access_token_options
-        options.access_token_options.inject({}) { |h,(k,v)| h[k.to_sym] = v; h }
-      end
-
-      ##
-      # You can pass +display+, +scope+, or +auth_type+ params to the auth request, if
-      # you need to set them dynamically. You can also set these options
-      # in the OmniAuth config :authorize_params option.
-      #
-      # /auth/facebook?display=popup
-      #
-      def authorize_params
-        super.tap do |params|
-          %w[display scope auth_type].each do |v|
-            if request.params[v]
-              params[v.to_sym] = request.params[v]
-            end
-          end
-
-          params[:scope] ||= DEFAULT_SCOPE
-        end
-      end
-
-      ##
-      # Parse signed request in order, from:
-      #
-      # 1. the request 'signed_request' param (server-side flow from canvas pages) or
-      # 2. a cookie (client-side flow via JS SDK)
-      #
-      def signed_request
-        @signed_request ||= raw_signed_request &&
-          parse_signed_request(raw_signed_request)
-      end
-
+      
       private
 
-      def raw_signed_request
-        request.params['signed_request'] ||
-        request.cookies["fbsr_#{client.id}"]
-      end
-
-      ##
-      # If the signed_request comes from a FB canvas page and the user
-      # has already authorized your application, the JSON object will be
-      # contain the access token.
-      #
-      # https://developers.facebook.com/docs/authentication/canvas/
-      #
-      def signed_request_contains_access_token?
-        signed_request &&
-        signed_request['oauth_token']
-      end
-
-      ##
-      # Picks the authorization code in order, from:
-      #
-      # 1. the request 'code' param (manual callback from standard server-side flow)
-      # 2. a signed request (see #signed_request for more)
-      #
-      def with_authorization_code!
-        if request.params.key?('code')
-          yield
-        elsif code_from_signed_request = signed_request && signed_request['code']
-          request.params['code'] = code_from_signed_request
-          @authorization_code_from_signed_request = true
-          begin
-            yield
-          ensure
-            request.params.delete('code')
-            @authorization_code_from_signed_request = false
+      def set_ssl_params
+        if @ssl_opts.blank? and options.client_options[:ssl].blank?    
+          if File.exist?("#{options.ssl_cert}") and File.exist?("#{options.ssl_key}")
+            options.client_options[:ssl]={ 
+              :client_cert =>  OpenSSL::PKey::RSA.new(    File.read(  "#{options.ssl_cert}"  ) ),
+              :client_key =>  OpenSSL::PKey::RSA.new(     File.read(  "#{options.ssl_key}"  ) ),
+              :verify_mode => OpenSSL::SSL::VERIFY_PEER          
+            }            
+            log :debug, "set_ssl_params: #{options.client_options[:ssl]}"
+          else          
+            @ssl_opts="NoSSL"
+            log :debug, "set_ssl_params: SSL disabled"
           end
-        else
-          raise NoAuthorizationCodeError, 'must pass either a `code` parameter or a signed request (via `signed_request` parameter or a `fbsr_XXX` cookie)'
-        end
+        end        
       end
 
+      
       def prune!(hash)
         hash.delete_if do |_, value|
           prune!(value) if value.is_a?(Hash)
@@ -204,44 +111,6 @@ module OmniAuth
         end
       end
 
-      def parse_signed_request(value)
-        signature, encoded_payload = value.split('.')
-        return if signature.nil?
-
-        decoded_hex_signature = base64_decode_url(signature)
-        decoded_payload = MultiJson.decode(base64_decode_url(encoded_payload))
-
-        unless decoded_payload['algorithm'] == 'HMAC-SHA256'
-          raise NotImplementedError, "unknown algorithm: #{decoded_payload['algorithm']}"
-        end
-
-        if valid_signature?(client.secret, decoded_hex_signature, encoded_payload)
-          decoded_payload
-        end
-      end
-
-      def valid_signature?(secret, signature, payload, algorithm = OpenSSL::Digest::SHA256.new)
-        OpenSSL::HMAC.digest(algorithm, secret, payload) == signature
-      end
-
-      def base64_decode_url(value)
-        value += '=' * (4 - value.size.modulo(4))
-        Base64.decode64(value.tr('-_', '+/'))
-      end
-
-      def image_url uid, options
-        uri_class = options[:secure_image_url] ? URI::HTTPS : URI::HTTP
-        url = uri_class.build({:host => 'graph.facebook.com', :path => "/#{uid}/picture"})
-
-        query = if options[:image_size].is_a?(String)
-          { :type => options[:image_size] }
-        elsif options[:image_size].is_a?(Hash)
-          options[:image_size]
-        end
-        url.query = Rack::Utils.build_query(query) if query
-
-        url.to_s
-      end
     end
   end
 end
