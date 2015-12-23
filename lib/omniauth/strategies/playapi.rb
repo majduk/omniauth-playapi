@@ -20,11 +20,16 @@ module OmniAuth
         :authorize_params => {}    
       }
                                    
-      option :authorize_options, [:response_type, :scope, :state, :redirect_uri, :display]
+      option :authorize_options, [:response_type, :scope, :state, :redirect_uri, :display, :hint, :approval_prompt]
       option :auth_token_params, {
        :mode => :query, 
         :param_name => "access_token"
       }
+
+      #custom as PlayAPI redirect_url cannot contain query_string
+      def callback_url
+        full_host + script_name + callback_path
+      end
 
       def client
        set_ssl_params                            
