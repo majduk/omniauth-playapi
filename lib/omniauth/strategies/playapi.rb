@@ -54,6 +54,19 @@ module OmniAuth
       end
 
       uid { raw_info['msisdn'] }
+
+      credentials do
+        hash = {"token" => access_token.token}
+        hash.merge!("refresh_token" => access_token.refresh_token) if access_token.expires? && access_token.refresh_token
+        hash.merge!("expires_at" => access_token.expires_at) if access_token.expires?
+        hash.merge!("expires" => access_token.expires?)
+        raw_scope=access_token.params["scope"] unless  access_token.params.blank?
+        unless raw_scope.blank?
+          scope_list=raw_scope.split(" ")
+          hash.merge!("scope" => scope_list)
+        end     
+        hash
+      end
       
       info do
         prune!({
